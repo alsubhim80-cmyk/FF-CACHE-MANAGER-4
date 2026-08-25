@@ -59,13 +59,20 @@ jobs:
             $env:PATH = "$dir;$env:PATH"
         }
 
-        # 3. العثور على مسار iPhoneOS.sdk وضبط متغيرات SDKROOT للمترجم
+        # 3. تحديد مسار iPhoneOS.sdk وتمريره للمترجم عبر CFLAGS و -isysroot
         $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
         if ($sdkDir) {
-            Write-Host "Setting SDKROOT to: $($sdkDir.FullName)"
-            $env:SDKROOT = $sdkDir.FullName
-            $env:IOS_SDK = $sdkDir.FullName
-            $env:IPHONEOS_DEPLOYMENT_TARGET = "12.0"
+            $sdkPath = $sdkDir.FullName
+            Write-Host "Configuring Clang Flags with SDK Path: $sdkPath"
+            
+            $env:SDKROOT = $sdkPath
+            $env:IOS_SDK = $sdkPath
+            
+            # إجبار Clang على قراءة مجلدات النظام داخل iPhoneOS.sdk
+            $sysrootFlag = "-isysroot `"$sdkPath`""
+            $env:CFLAGS = "$sysrootFlag"
+            $env:CXXFLAGS = "$sysrootFlag"
+            $env:OBJCFLAGS = "$sysrootFlag"
         }
 
         # 4. تشغيل سكريبت البناء
