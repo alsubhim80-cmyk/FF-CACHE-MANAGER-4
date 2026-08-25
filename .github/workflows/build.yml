@@ -27,7 +27,13 @@ jobs:
     - name: Setup Tools & Build
       shell: powershell
       run: |
-        # 1. تحديد مكان iPhoneOS.sdk في المستودع
+        # 1. إضافة مسار LLVM الرئيسي إلى PATH
+        $llvmBin = "C:\Program Files\LLVM\bin"
+        if (Test-Path $llvmBin) {
+            $env:PATH = "$llvmBin;$env:PATH"
+        }
+
+        # 2. تحديد مسار iPhoneOS.sdk
         $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
         if (-not $sdkDir) {
             Write-Error "Could not find iPhoneOS.sdk"
@@ -36,13 +42,14 @@ jobs:
         $sdkPath = $sdkDir.FullName
         Write-Host "SDK Location: $sdkPath"
 
-        # 2. تجهيز أدوات LLVM ونقلها لمجلدات Tools
+        # 3. جلب ملفات LLVM المصدرية
         $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $foundInstallName = Get-ChildItem -Path "C:\" -Filter "llvm-install-name-tool.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundObjcopy = Get-ChildItem -Path "C:\" -Filter "llvm-objcopy.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 
-        $lipoSrc = if ($foundLipo) { $foundLipo.FullName } else { $foundAr.FullName }
-        $installNameSrc = if ($foundObjcopy) { $foundObjcopy.FullName } else { $foundAr.FullName }
+        $lipoSrc = if ($foundLipo) { $foundLipo } else { $foundAr }
+        $installNameSrc = if ($foundInstallName) { $foundInstallName } else { if ($foundObjcopy) { $foundObjcopy } else { $foundAr } }
 
         $mainScript = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
         if (-not $mainScript) {
@@ -50,6 +57,7 @@ jobs:
             exit 1
         }
 
+        # 4. نسخ الأدوات وملفات الـ DLL المرتبطة لمنع خطأ 0xC0000135
         $possibleToolDirs = @(
             (Join-Path $mainScript.DirectoryName "app\ff_manager\tools"),
             (Join-Path $mainScript.DirectoryName "app\tools"),
@@ -58,38 +66,29 @@ jobs:
 
         foreach ($dir in $possibleToolDirs) {
             New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            if ($lipoSrc) { Copy-Item $lipoSrc -Destination (Join-Path $dir "llvm-lipo.exe") -Force }
-            if ($installNameSrc) { Copy-Item $installNameSrc -Destination (Join-Path $dir "llvm-install-name-tool.exe") -Force }
+            
+            if ($lipoSrc) {
+                Copy-Item $lipoSrc.FullName -Destination (Join-Path $dir "llvm-lipo.exe") -Force
+                Get-ChildItem -Path $lipoSrc.DirectoryName -Filter "*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $dir -Force
+            }
+            if ($installNameSrc) {
+                Copy-Item $installNameSrc.FullName -Destination (Join-Path $dir "llvm-install-name-tool.exe") -Force
+                Get-ChildItem -Path $installNameSrc.DirectoryName -Filter "*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $dir -Force
+            }
             $env:PATH = "$dir;$env:PATH"
         }
 
-        # 3. إنشاء Wrapper لـ Clang يضيف -isysroot توماتيكياً
-        $realClang = Get-Command clang.exe -ErrorAction SilentlyContinue
-        if (-not $realClang) {
-            $realClang = Get-ChildItem -Path "C:\" -Filter "clang.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        }
-
-        if ($realClang) {
-            $wrapperDir = "C:\clang_wrapper"
-            New-Item -ItemType Directory -Force -Path $wrapperDir | Out-Null
-            $cmdContent = "@echo off`n`"$($realClang.FullName)`" -isysroot `"$sdkPath`" %*"
-            Set-Content -Path (Join-Path $wrapperDir "clang.bat") -Value $cmdContent
-            Set-Content -Path (Join-Path $wrapperDir "clang.cmd") -Value $cmdContent
-            $env:PATH = "$wrapperDir;$env:PATH"
-        }
-
-        # 4. التعديل المباشر داخل ملف build.ps1 لتمرير -isysroot
+        # 5. توجيه Clang لقراءة SDK تلقائياً داخل build.ps1
         $innerBuildScript = Get-ChildItem -Recurse -Filter "build.ps1" | Where-Object { $_.DirectoryName -like "*ff_manager*" } | Select-Object -First 1
         if ($innerBuildScript) {
             $content = Get-Content $innerBuildScript.FullName -Raw
             if ($content -notmatch "-isysroot") {
                 $content = $content -replace 'clang(\.exe)?', "clang -isysroot `"$sdkPath`""
                 Set-Content -Path $innerBuildScript.FullName -Value $content
-                Write-Host "Successfully patched build.ps1 with -isysroot"
             }
         }
 
-        # 5. تشغيل سكربت البناء
+        # 6. بدء التجميع
         Set-Location $mainScript.DirectoryName
         Write-Host "Executing Build Script in: $($mainScript.DirectoryName)"
         & .\BUILD-FF-CACHE-MANAGER.ps1
