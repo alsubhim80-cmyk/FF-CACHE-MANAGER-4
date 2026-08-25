@@ -18,14 +18,16 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install LLVM
+    - name: Install Python Dependencies & LLVM
       run: |
+        python -m pip install --upgrade pip
+        pip install lief
         choco install llvm -y
 
     - name: Setup Tools & Build
       shell: powershell
       run: |
-        # 1. البحث عن أدوات LLVM في كامل النظام
+        # 1. البحث عن أدوات LLVM وتثبيتها
         $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundObjcopy = Get-ChildItem -Path "C:\" -Filter "llvm-objcopy.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -33,20 +35,17 @@ jobs:
         $lipoSrc = if ($foundLipo) { $foundLipo.FullName } else { $foundAr.FullName }
         $installNameSrc = if ($foundObjcopy) { $foundObjcopy.FullName } else { $foundAr.FullName }
 
-        # 2. إضافة المجلد الذي يحوي llvm-lipo إلى PATH الخاص بـ PowerShell مباشرة
         if ($foundLipo) {
             $env:PATH = "$($foundLipo.DirectoryName);$env:PATH"
-            Write-Host "Added to PATH: $($foundLipo.DirectoryName)"
         }
 
-        # 3. العثور على سكريبت البناء الرئيسي وتجهيز مجلدات الأدوات
+        # 2. تحديد سكريبت البناء ومجلدات الأدوات
         $script = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
         if (-not $script) {
             Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
             exit 1
         }
 
-        # وضع الأدوات في كل المجلدات المحتملة داخل مشروع ff_manager
         $possibleToolDirs = @(
             (Join-Path $script.DirectoryName "app\ff_manager\tools"),
             (Join-Path $script.DirectoryName "app\tools"),
@@ -60,7 +59,7 @@ jobs:
             $env:PATH = "$dir;$env:PATH"
         }
 
-        # 4. تشغيل سكربت البناء
+        # 3. تشغيل سكريبت البناء
         Set-Location $script.DirectoryName
         Write-Host "Executing Build Script in: $($script.DirectoryName)"
         & .\BUILD-FF-CACHE-MANAGER.ps1
