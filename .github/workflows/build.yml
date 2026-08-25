@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: macos-latest
 
     steps:
     - name: Checkout Code
@@ -18,75 +18,24 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install Python Dependencies & LLVM
+    - name: Install Python Dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install lief
-        choco install llvm -y
+        python3 -m pip install --upgrade pip
+        pip3 install lief
 
-    - name: Setup Tools & Build
-      shell: powershell
+    - name: Run Build Script
       run: |
-        # 1. إضافة مسار LLVM الرئيسي إلى PATH
-        $llvmBin = "C:\Program Files\LLVM\bin"
-        if (Test-Path $llvmBin) {
-            $env:PATH = "$llvmBin;$env:PATH"
-        }
-
-        # 2. تحديد مسارات iPhoneOS.sdk و Frameworks
-        $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
-        if (-not $sdkDir) {
-            Write-Error "Could not find iPhoneOS.sdk"
-            exit 1
-        }
-        $sdkPath = $sdkDir.FullName
-        $frameworksPath = Join-Path $sdkPath "System\Library\Frameworks"
-        $includePath = Join-Path $sdkPath "usr\include"
-        Write-Host "SDK Location: $sdkPath"
-
-        # 3. إسناد الخيارات مباشرة لمتغيرات بيئة Clang الرسمية (تحل مشكلة UIKit دون تعديل كود السكربت)
-        $env:CLANG_FLAGS = "-isysroot `"$sdkPath`" -F `"$frameworksPath`" -I `"$includePath`""
-        $env:CFLAGS = "-isysroot `"$sdkPath`" -F `"$frameworksPath`" -I `"$includePath`""
-        $env:OBJCFLAGS = "-isysroot `"$sdkPath`" -F `"$frameworksPath`" -I `"$includePath`""
-
-        # 4. جلب أدوات LLVM ونقلها لمجلدات Tools لتفادي خطأ 0xC0000135
-        $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        $foundInstallName = Get-ChildItem -Path "C:\" -Filter "llvm-install-name-tool.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        $foundObjcopy = Get-ChildItem -Path "C:\" -Filter "llvm-objcopy.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-
-        $lipoSrc = if ($foundLipo) { $foundLipo } else { $foundAr }
-        $installNameSrc = if ($foundInstallName) { $foundInstallName } else { if ($foundObjcopy) { $foundObjcopy } else { $foundAr } }
-
-        $mainScript = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
-        if (-not $mainScript) {
-            Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
-            exit 1
-        }
-
-        $possibleToolDirs = @(
-            (Join-Path $mainScript.DirectoryName "app\ff_manager\tools"),
-            (Join-Path $mainScript.DirectoryName "app\tools"),
-            (Join-Path $mainScript.DirectoryName "tools")
-        )
-
-        foreach ($dir in $possibleToolDirs) {
-            New-Item -ItemType Directory -Force -Path $dir | Out-Null
-            if ($lipoSrc) {
-                Copy-Item $lipoSrc.FullName -Destination (Join-Path $dir "llvm-lipo.exe") -Force
-                Get-ChildItem -Path $lipoSrc.DirectoryName -Filter "*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $dir -Force
-            }
-            if ($installNameSrc) {
-                Copy-Item $installNameSrc.FullName -Destination (Join-Path $dir "llvm-install-name-tool.exe") -Force
-                Get-ChildItem -Path $installNameSrc.DirectoryName -Filter "*.dll" -ErrorAction SilentlyContinue | Copy-Item -Destination $dir -Force
-            }
-            $env:PATH = "$dir;$env:PATH"
-        }
-
-        # 5. تشغيل السكربت الأصلي بدون تعديلات على ملفاته
-        Set-Location $mainScript.DirectoryName
-        Write-Host "Executing Build Script in: $($mainScript.DirectoryName)"
-        & .\BUILD-FF-CACHE-MANAGER.ps1
+        # البحث عن ملف السكربت الرئيسي وتشغيله عبر PowerShell Core (pwsh)
+        SCRIPT_PATH=$(find . -name "BUILD-FF-CACHE-MANAGER.ps1" | head -n 1)
+        if [ -z "$SCRIPT_PATH" ]; then
+          echo "Could not find BUILD-FF-CACHE-MANAGER.ps1"
+          exit 1
+        fi
+        SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
+        cd "$SCRIPT_DIR"
+        
+        # تشغيل السكربت
+        pwsh ./BUILD-FF-CACHE-MANAGER.ps1
 
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
