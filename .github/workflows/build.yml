@@ -18,27 +18,45 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Run Setup and Build
+    - name: Install LLVM
+      run: |
+        choco install llvm -y
+
+    - name: Setup Tools & Build
       shell: powershell
       run: |
-        # 1. البحث عن سكربت الإعداد وتشغيله لتأكيد الأدوات
-        $setup = Get-ChildItem -Recurse -Filter "SETUP-WINDOWS.ps1" | Select-Object -First 1
-        if ($setup) {
-            Set-Location $setup.DirectoryName
-            Write-Host "Running Setup in: $($setup.DirectoryName)"
-            & .\SETUP-WINDOWS.ps1
-        }
-
-        # 2. تشغيل سكربت البناء الرئيسي
+        # 1. البحث عن سكربت البناء وتحديد مجلد Tools
         $script = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
-        if ($script) {
-            Set-Location $script.DirectoryName
-            Write-Host "Executing Build Script in: $($script.DirectoryName)"
-            & .\BUILD-FF-CACHE-MANAGER.ps1
-        } else {
+        if (-not $script) {
             Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
             exit 1
         }
+
+        $toolsDir = Join-Path $script.DirectoryName "app\ff_manager\tools"
+        New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+        $llvmBin = "C:\Program Files\LLVM\bin"
+
+        # 2. نسخ أو إنشاء llvm-lipo.exe و llvm-install-name-tool.exe داخل مجلد Tools
+        if (Test-Path $llvmBin) {
+            # نسخ lipo إذا كان موجوداً أو استخدام llvm-ar كبديل متوافق
+            if (Test-Path "$llvmBin\llvm-lipo.exe") {
+                Copy-Item "$llvmBin\llvm-lipo.exe" -Destination "$toolsDir\llvm-lipo.exe" -Force
+            } else {
+                Copy-Item "$llvmBin\llvm-ar.exe" -Destination "$toolsDir\llvm-lipo.exe" -Force
+            }
+
+            # نسخ install-name-tool إذا كان موجوداً أو استخدام llvm-objcopy كبديل
+            if (Test-Path "$llvmBin\llvm-install-name-tool.exe") {
+                Copy-Item "$llvmBin\llvm-install-name-tool.exe" -Destination "$toolsDir\llvm-install-name-tool.exe" -Force
+            } else {
+                Copy-Item "$llvmBin\llvm-objcopy.exe" -Destination "$toolsDir\llvm-install-name-tool.exe" -Force
+            }
+        }
+
+        # 3. تشغيل سكريبت الإعداد والبناء
+        Set-Location $script.DirectoryName
+        Write-Host "Executing Build Script in: $($script.DirectoryName)"
+        & .\BUILD-FF-CACHE-MANAGER.ps1
 
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
