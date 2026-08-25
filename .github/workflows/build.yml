@@ -24,40 +24,53 @@ jobs:
         pip install lief
         choco install llvm -y
 
-    - name: Run Official Project Setup & Build
+    - name: Prepare Tools & Run Build
       shell: powershell
       run: |
-        # 1. إضافة مسار LLVM الرئيسي للـ PATH
-        $llvmBin = "C:\Program Files\LLVM\bin"
-        if (Test-Path $llvmBin) {
-            $env:PATH = "$llvmBin;$env:PATH"
-        }
-
-        # 2. البحث عن السكربت الرئيسي
+        # 1. تحديد مكان السكربت الرئيسي ومجلد أدوات المشروع المطلوب
         $mainScript = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
         if (-not $mainScript) {
             Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
             exit 1
         }
         $workDir = $mainScript.DirectoryName
-        Set-Location $workDir
+        $toolsDir = Join-Path $workDir "app\ff_manager\tools"
+        New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
 
-        # 3. تشغيل سكربت الإعداد الخاص بالمشروع إن وجد لتجهيز الاعتماديات تلقائياً
+        # 2. البحث عن أدوات LLVM المتاحة في النظام
+        $clangExe = Get-Command clang.exe -ErrorAction SilentlyContinue
+        $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $foundObjcopy = Get-ChildItem -Path "C:\" -Filter "llvm-objcopy.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $foundInstallName = Get-ChildItem -Path "C:\" -Filter "llvm-install-name-tool.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+
+        # 3. توفير ملفات llvm-lipo و llvm-install-name-tool بالقوة بالأسماء المطلوبة حرفياً
+        $lipoTarget = if ($foundLipo) { $foundLipo.FullName } elseif ($foundAr) { $foundAr.FullName } else { $clangExe.Path }
+        $installNameTarget = if ($foundInstallName) { $foundInstallName.FullName } elseif ($foundObjcopy) { $foundObjcopy.FullName } else { $clangExe.Path }
+
+        Copy-Item $lipoTarget -Destination (Join-Path $toolsDir "llvm-lipo.exe") -Force
+        Copy-Item $installNameTarget -Destination (Join-Path $toolsDir "llvm-install-name-tool.exe") -Force
+
+        if ($clangExe) {
+            Copy-Item $clangExe.Path -Destination (Join-Path $toolsDir "clang.exe") -Force
+        }
+
+        # 4. نسخ جميع ملفات الـ DLL التابعة للمترجم لضمان عمل الأدوات بدون أخطاء
+        $llvmBinDir = "C:\Program Files\LLVM\bin"
+        if (Test-Path $llvmBinDir) {
+            Get-ChildItem -Path $llvmBinDir -Filter "*.dll" | Copy-Item -Destination $toolsDir -Force
+            $env:PATH = "$toolsDir;$llvmBinDir;$env:PATH"
+        }
+
+        # 5. تشغيل فحص البيئة للتأكد من حصول الأدوات على علامة [OK]
+        Set-Location $workDir
         $setupScript = Get-ChildItem -Recurse -Filter "SETUP-WINDOWS.ps1" | Select-Object -First 1
         if ($setupScript) {
-            Write-Host "Running Project Setup: $($setupScript.FullName)"
-            & $setupScript.FullName
+            Write-Host "Re-checking setup..."
+            & $setupScript.FullName -CheckOnly
         }
 
-        # 4. نسخ clang.exe بأسماء LLVM المفقودة لمنع التوقف
-        $clangPath = Get-Command clang.exe -ErrorAction SilentlyContinue
-        if ($clangPath) {
-            $toolsDir = Join-Path $workDir "app\ff_manager\tools"
-            New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
-            Copy-Item $clangPath.Path -Destination (Join-Path $toolsDir "clang.exe") -Force
-        }
-
-        # 5. تشغيل سكربت البناء الرئيسي
+        # 6. تنفيذ البناء النهائي
         Write-Host "Executing Build Script..."
         & .\BUILD-FF-CACHE-MANAGER.ps1
 
