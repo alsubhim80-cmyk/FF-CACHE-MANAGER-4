@@ -1,0 +1,30 @@
+name: Build Unsigned iOS IPA
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Run PowerShell Build Script
+      shell: powershell
+      run: |
+        .\FF-CACHE-MANAGER-SOURCE\BUILD-FF-CACHE-MANAGER.ps1
+
+    - name: Upload IPA Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: Final-Unsigned-IPA
+        path: FF-CACHE-MANAGER-SOURCE/release/*.ipa
