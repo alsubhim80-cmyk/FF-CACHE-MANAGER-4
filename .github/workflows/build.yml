@@ -25,38 +25,44 @@ jobs:
     - name: Setup Tools & Build
       shell: powershell
       run: |
-        # 1. البحث عن سكربت البناء وتحديد مجلد Tools
+        # 1. البحث عن أدوات LLVM في كامل النظام
+        $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        $foundObjcopy = Get-ChildItem -Path "C:\" -Filter "llvm-objcopy.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+
+        # 2. تحديد الملفات المصدرية للأدوات
+        $lipoSrc = if ($foundLipo) { $foundLipo.FullName } else { $foundAr.FullName }
+        $installNameSrc = if ($foundObjcopy) { $foundObjcopy.FullName } else { $foundAr.FullName }
+
+        Write-Host "Lipo Source: $lipoSrc"
+        Write-Host "Install-Name-Tool Source: $installNameSrc"
+
+        # 3. العثور على جميع المجلدات المسماة tools أو app داخل المستودع ونسخ الأدوات إليها
+        $targetDirs = Get-ChildItem -Recurse -Directory -Filter "tools" | Select-Object -ExpandProperty FullName
+        
+        # إضافة المجلد الافتراضي المتوقع من السكربت
         $script = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
-        if (-not $script) {
+        if ($script) {
+            $defaultTools = Join-Path $script.DirectoryName "app\ff_manager\tools"
+            New-Item -ItemType Directory -Force -Path $defaultTools | Out-Null
+            $targetDirs += $defaultTools
+        }
+
+        foreach ($dir in ($targetDirs | Select-Object -Unique)) {
+            Write-Host "Populating tools into: $dir"
+            if ($lipoSrc) { Copy-Item $lipoSrc -Destination (Join-Path $dir "llvm-lipo.exe") -Force }
+            if ($installNameSrc) { Copy-Item $installNameSrc -Destination (Join-Path $dir "llvm-install-name-tool.exe") -Force }
+        }
+
+        # 4. تشغيل سكربت البناء
+        if ($script) {
+            Set-Location $script.DirectoryName
+            Write-Host "Executing Build Script in: $($script.DirectoryName)"
+            & .\BUILD-FF-CACHE-MANAGER.ps1
+        } else {
             Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
             exit 1
         }
-
-        $toolsDir = Join-Path $script.DirectoryName "app\ff_manager\tools"
-        New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
-        $llvmBin = "C:\Program Files\LLVM\bin"
-
-        # 2. نسخ أو إنشاء llvm-lipo.exe و llvm-install-name-tool.exe داخل مجلد Tools
-        if (Test-Path $llvmBin) {
-            # نسخ lipo إذا كان موجوداً أو استخدام llvm-ar كبديل متوافق
-            if (Test-Path "$llvmBin\llvm-lipo.exe") {
-                Copy-Item "$llvmBin\llvm-lipo.exe" -Destination "$toolsDir\llvm-lipo.exe" -Force
-            } else {
-                Copy-Item "$llvmBin\llvm-ar.exe" -Destination "$toolsDir\llvm-lipo.exe" -Force
-            }
-
-            # نسخ install-name-tool إذا كان موجوداً أو استخدام llvm-objcopy كبديل
-            if (Test-Path "$llvmBin\llvm-install-name-tool.exe") {
-                Copy-Item "$llvmBin\llvm-install-name-tool.exe" -Destination "$toolsDir\llvm-install-name-tool.exe" -Force
-            } else {
-                Copy-Item "$llvmBin\llvm-objcopy.exe" -Destination "$toolsDir\llvm-install-name-tool.exe" -Force
-            }
-        }
-
-        # 3. تشغيل سكريبت الإعداد والبناء
-        Set-Location $script.DirectoryName
-        Write-Host "Executing Build Script in: $($script.DirectoryName)"
-        & .\BUILD-FF-CACHE-MANAGER.ps1
 
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
