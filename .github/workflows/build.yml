@@ -18,13 +18,32 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Run PowerShell Build Script
+    - name: Run Setup and Build
       shell: powershell
       run: |
-        .\FF-CACHE-MANAGER-SOURCE\BUILD-FF-CACHE-MANAGER.ps1
+        # 1. البحث عن سكربت الإعداد وتشغيله لتأكيد الأدوات
+        $setup = Get-ChildItem -Recurse -Filter "SETUP-WINDOWS.ps1" | Select-Object -First 1
+        if ($setup) {
+            Set-Location $setup.DirectoryName
+            Write-Host "Running Setup in: $($setup.DirectoryName)"
+            & .\SETUP-WINDOWS.ps1
+        }
+
+        # 2. تشغيل سكربت البناء الرئيسي
+        $script = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
+        if ($script) {
+            Set-Location $script.DirectoryName
+            Write-Host "Executing Build Script in: $($script.DirectoryName)"
+            & .\BUILD-FF-CACHE-MANAGER.ps1
+        } else {
+            Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
+            exit 1
+        }
 
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
       with:
         name: Final-Unsigned-IPA
-        path: FF-CACHE-MANAGER-SOURCE/release/*.ipa
+        path: |
+          **/release/*.ipa
+          **/*.ipa
