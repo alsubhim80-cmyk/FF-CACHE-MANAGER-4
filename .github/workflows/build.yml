@@ -27,7 +27,7 @@ jobs:
     - name: Prepare Tools & Run Build
       shell: powershell
       run: |
-        # 1. تحديد مكان السكربت الرئيسي ومجلد أدوات المشروع
+        # 1. تحديد مكان السكربت الرئيسي ومجلد الأدوات
         $mainScript = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
         if (-not $mainScript) {
             Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
@@ -37,7 +37,7 @@ jobs:
         $toolsDir = Join-Path $workDir "app\ff_manager\tools"
         New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
 
-        # 2. نسخ أدوات LLVM المكتملة إلى مجلد الأدوات لتأكيد [OK]
+        # 2. نسخ أدوات LLVM
         $llvmBin = "C:\Program Files\LLVM\bin"
         if (Test-Path $llvmBin) {
             Get-ChildItem -Path $llvmBin -Filter "*.exe" | Copy-Item -Destination $toolsDir -Force
@@ -57,21 +57,29 @@ jobs:
             if (Test-Path $ar) { Copy-Item $ar -Destination $realLipo -Force }
         }
 
-        # 4. البحث عن مسار iPhoneOS.sdk صراحة
+        # 4. العثور على iPhoneOS.sdk وتحديد المسارات المباشرة للـ Frameworks و Headers
         $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
         if (-not $sdkDir) {
             Write-Error "Could not find iPhoneOS.sdk"
             exit 1
         }
         $sdkPath = $sdkDir.FullName
+        $frameworksPath = Join-Path $sdkPath "System\Library\Frameworks"
+        $includePath = Join-Path $sdkPath "usr\include"
         Write-Host "Using SDK Path: $sdkPath"
 
-        # 5. تحديث متغيرات البيئة و PATH
+        # 5. إجبار المترجم على رؤية الهيدرات عبر متغيرات مسارات العناوين الخاصة بـ GCC/Clang
+        $env:CPATH = "$frameworksPath;$includePath"
+        $env:C_INCLUDE_PATH = "$frameworksPath;$includePath"
+        $env:OBJC_INCLUDE_PATH = "$frameworksPath;$includePath"
+        $env:CPLUS_INCLUDE_PATH = "$frameworksPath;$includePath"
+
+        # 6. تحديث PATH
         $env:PATH = "$toolsDir;$llvmBin;$env:PATH"
 
-        # 6. تشغيل البناء مع تمرير مسار SDK صراحة بحسب التعليمات الموضحة في السجل (السطر 78)
+        # 7. تشغيل السكربت الرئيسي للبناء
         Set-Location $workDir
-        Write-Host "Executing Build Script with Explicit SDK..."
+        Write-Host "Executing Build Script..."
         & .\BUILD-FF-CACHE-MANAGER.ps1 -IosSdk "$sdkPath"
 
     - name: Upload IPA Artifact
