@@ -1,4 +1,4 @@
-name: Build Unsigned iOS IPA
+name: Clean iOS IPA Build
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    runs-on: macos-latest
 
     steps:
     - name: Checkout Code
@@ -18,77 +18,21 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install Python Dependencies & LLVM
+    - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
         pip install lief
-        choco install llvm -y
 
-    - name: Prepare Tools & Fix Build Script
-      shell: powershell
+    - name: Run Build Script
       run: |
-        # 1. العثور على السكربت الرئيسي ومجلد أدوات المشروع
-        $mainScript = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
-        if (-not $mainScript) {
-            Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
-            exit 1
-        }
-        $workDir = $mainScript.DirectoryName
-        $toolsDir = Join-Path $workDir "app\ff_manager\tools"
-        New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
-
-        # 2. البحث عن iPhoneOS.sdk وتحديد المسارات المطلوبة
-        $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
-        if (-not $sdkDir) {
-            Write-Error "Could not find iPhoneOS.sdk"
-            exit 1
-        }
-        $sdkPath = $sdkDir.FullName
-        $frameworksPath = Join-Path $sdkPath "System\Library\Frameworks"
-        $includePath = Join-Path $sdkPath "usr\include"
-        Write-Host "SDK Location: $sdkPath"
-
-        # 3. توفير الأدوات كملفات .exe حقيقية لتجاوز فحص SETUP-WINDOWS
-        $llvmBin = "C:\Program Files\LLVM\bin"
-        if (Test-Path $llvmBin) {
-            Get-ChildItem -Path $llvmBin -Filter "*.dll" | Copy-Item -Destination $toolsDir -Force
-            Get-ChildItem -Path $llvmBin -Filter "*.exe" | Copy-Item -Destination $toolsDir -Force
-        }
-
-        # التأكد من أسماء الملفات التي يبحث عنها السكربت حرفياً
-        $realClang = Join-Path $toolsDir "clang.exe"
-        if (Test-Path $realClang) {
-            if (-not (Test-Path (Join-Path $toolsDir "llvm-lipo.exe"))) {
-                $objcopy = Join-Path $toolsDir "llvm-objcopy.exe"
-                if (Test-Path $objcopy) { Copy-Item $objcopy (Join-Path $toolsDir "llvm-lipo.exe") -Force }
-                else { Copy-Item $realClang (Join-Path $toolsDir "llvm-lipo.exe") -Force }
-            }
-            if (-not (Test-Path (Join-Path $toolsDir "llvm-install-name-tool.exe"))) {
-                $objcopy = Join-Path $toolsDir "llvm-objcopy.exe"
-                if (Test-Path $objcopy) { Copy-Item $objcopy (Join-Path $toolsDir "llvm-install-name-tool.exe") -Force }
-                else { Copy-Item $realClang (Join-Path $toolsDir "llvm-install-name-tool.exe") -Force }
-            }
-        }
-
-        # 4. تعديل أمر clang داخل ملف app\ff_manager\build.ps1 بحقن مباشر وآمن للوسائط
-        $targetBuildPs1 = Join-Path $workDir "app\ff_manager\build.ps1"
-        if (Test-Path $targetBuildPs1) {
-            Write-Host "Modifying build.ps1 directly for clang arguments..."
-            $content = Get-Content $targetBuildPs1 -Raw
-            # استبدال استدعاء clang ليشمل مسارات الـ SDK صراحة
-            $oldClangCmd = 'clang '
-            $newClangCmd = "clang -isysroot `"$sdkPath`" -F`"$frameworksPath`" -I`"$includePath`" "
-            $content = $content.Replace($oldClangCmd, $newClangCmd)
-            Set-Content -Path $targetBuildPs1 -Value $content -NoNewline
-        }
-
-        # 5. تحديث PATH
-        $env:PATH = "$toolsDir;$llvmBin;$env:PATH"
-
-        # 6. تشغيل السكربت الرئيسي للبناء
-        Set-Location $workDir
-        Write-Host "Executing Build Script..."
-        & .\BUILD-FF-CACHE-MANAGER.ps1 -IosSdk "$sdkPath"
+        # البحث عن السكربت الرئيسي وتشغيله مباشرة في بيئة ماك الرسمية
+        BUILD_SCRIPT=$(find . -name "BUILD-FF-CACHE-MANAGER.ps1" | head -n 1)
+        if [ -n "$BUILD_SCRIPT" ]; then
+          pwsh "$BUILD_SCRIPT"
+        else
+          echo "Main build script not found!"
+          exit 1
+        fi
 
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
