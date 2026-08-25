@@ -27,7 +27,16 @@ jobs:
     - name: Setup Tools & Build
       shell: powershell
       run: |
-        # 1. البحث عن أدوات LLVM وتجهيز البيئة
+        # 1. تحديد مكان iPhoneOS.sdk في المستودع
+        $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
+        if (-not $sdkDir) {
+            Write-Error "Could not find iPhoneOS.sdk"
+            exit 1
+        }
+        $sdkPath = $sdkDir.FullName
+        Write-Host "SDK Location: $sdkPath"
+
+        # 2. تجهيز أدوات LLVM ونقلها لمجلدات Tools
         $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundObjcopy = Get-ChildItem -Path "C:\" -Filter "llvm-objcopy.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -35,21 +44,16 @@ jobs:
         $lipoSrc = if ($foundLipo) { $foundLipo.FullName } else { $foundAr.FullName }
         $installNameSrc = if ($foundObjcopy) { $foundObjcopy.FullName } else { $foundAr.FullName }
 
-        if ($foundLipo) {
-            $env:PATH = "$($foundLipo.DirectoryName);$env:PATH"
-        }
-
-        # 2. تحديد سكريبت البناء ومجلدات الأدوات
-        $script = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
-        if (-not $script) {
+        $mainScript = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
+        if (-not $mainScript) {
             Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
             exit 1
         }
 
         $possibleToolDirs = @(
-            (Join-Path $script.DirectoryName "app\ff_manager\tools"),
-            (Join-Path $script.DirectoryName "app\tools"),
-            (Join-Path $script.DirectoryName "tools")
+            (Join-Path $mainScript.DirectoryName "app\ff_manager\tools"),
+            (Join-Path $mainScript.DirectoryName "app\tools"),
+            (Join-Path $mainScript.DirectoryName "tools")
         )
 
         foreach ($dir in $possibleToolDirs) {
@@ -59,31 +63,36 @@ jobs:
             $env:PATH = "$dir;$env:PATH"
         }
 
-        # 3. تحديد مسار iPhoneOS.sdk وتمريره للمترجم عبر CFLAGS و -isysroot
-        $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
-        if ($sdkDir) {
-            $sdkPath = $sdkDir.FullName
-            Write-Host "Configuring Clang Flags with SDK Path: $sdkPath"
-            
-            $env:SDKROOT = $sdkPath
-            $env:IOS_SDK = $sdkPath
-            
-            # إجبار Clang على قراءة مجلدات النظام داخل iPhoneOS.sdk
-            $sysrootFlag = "-isysroot `"$sdkPath`""
-            $env:CFLAGS = "$sysrootFlag"
-            $env:CXXFLAGS = "$sysrootFlag"
-            $env:OBJCFLAGS = "$sysrootFlag"
+        # 3. إنشاء Wrapper لـ Clang يضيف -isysroot توماتيكياً
+        $realClang = Get-Command clang.exe -ErrorAction SilentlyContinue
+        if (-not $realClang) {
+            $realClang = Get-ChildItem -Path "C:\" -Filter "clang.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         }
 
-        # 4. تشغيل سكريبت البناء
-        Set-Location $script.DirectoryName
-        Write-Host "Executing Build Script in: $($script.DirectoryName)"
-        
-        if ($sdkDir) {
-            & .\BUILD-FF-CACHE-MANAGER.ps1 -IosSdk "$($sdkDir.FullName)"
-        } else {
-            & .\BUILD-FF-CACHE-MANAGER.ps1
+        if ($realClang) {
+            $wrapperDir = "C:\clang_wrapper"
+            New-Item -ItemType Directory -Force -Path $wrapperDir | Out-Null
+            $cmdContent = "@echo off`n`"$($realClang.FullName)`" -isysroot `"$sdkPath`" %*"
+            Set-Content -Path (Join-Path $wrapperDir "clang.bat") -Value $cmdContent
+            Set-Content -Path (Join-Path $wrapperDir "clang.cmd") -Value $cmdContent
+            $env:PATH = "$wrapperDir;$env:PATH"
         }
+
+        # 4. التعديل المباشر داخل ملف build.ps1 لتمرير -isysroot
+        $innerBuildScript = Get-ChildItem -Recurse -Filter "build.ps1" | Where-Object { $_.DirectoryName -like "*ff_manager*" } | Select-Object -First 1
+        if ($innerBuildScript) {
+            $content = Get-Content $innerBuildScript.FullName -Raw
+            if ($content -notmatch "-isysroot") {
+                $content = $content -replace 'clang(\.exe)?', "clang -isysroot `"$sdkPath`""
+                Set-Content -Path $innerBuildScript.FullName -Value $content
+                Write-Host "Successfully patched build.ps1 with -isysroot"
+            }
+        }
+
+        # 5. تشغيل سكربت البناء
+        Set-Location $mainScript.DirectoryName
+        Write-Host "Executing Build Script in: $($mainScript.DirectoryName)"
+        & .\BUILD-FF-CACHE-MANAGER.ps1
 
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
