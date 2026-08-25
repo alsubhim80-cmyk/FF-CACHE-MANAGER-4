@@ -27,35 +27,22 @@ jobs:
     - name: Setup Tools & Build
       shell: powershell
       run: |
-        # 1. تحديد مسار iPhoneOS.sdk والـ Frameworks
+        # 1. إضافة مسار LLVM الرئيسي إلى PATH
+        $llvmBin = "C:\Program Files\LLVM\bin"
+        if (Test-Path $llvmBin) {
+            $env:PATH = "$llvmBin;$env:PATH"
+        }
+
+        # 2. البحث عن مسار iPhoneOS.sdk
         $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
         if (-not $sdkDir) {
             Write-Error "Could not find iPhoneOS.sdk"
             exit 1
         }
         $sdkPath = $sdkDir.FullName
-        $frameworksPath = Join-Path $sdkPath "System\Library\Frameworks"
-        $includePath = Join-Path $sdkPath "usr\include"
         Write-Host "SDK Location: $sdkPath"
 
-        # 2. إنشاء Clang Wrapper لإجبار المترجم على قراءة مسارات SDK والـ Frameworks
-        $realClang = Get-Command clang.exe -ErrorAction SilentlyContinue
-        if (-not $realClang) {
-            $realClang = Get-ChildItem -Path "C:\Program Files\LLVM\bin" -Filter "clang.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        }
-
-        $wrapperDir = "C:\clang_wrapper"
-        New-Item -ItemType Directory -Force -Path $wrapperDir | Out-Null
-
-        # إنشاء ملفات الـ Wrapper
-        $cmdContent = "@echo off`n`"$($realClang.FullName)`" -isysroot `"$sdkPath`" -F `"$frameworksPath`" -I `"$includePath`" %*"
-        Set-Content -Path (Join-Path $wrapperDir "clang.bat") -Value $cmdContent
-        Set-Content -Path (Join-Path $wrapperDir "clang.exe.bat") -Value $cmdContent
-
-        # وضع مجلد الـ Wrapper في بداية PATH
-        $env:PATH = "$wrapperDir;$env:PATH"
-
-        # 3. جلب أدوات LLVM المساعدة ونقلها لمنع خطأ DLL (0xC0000135)
+        # 3. جلب أدوات LLVM ونقلها لمجلدات Tools لمنع خطأ 0xC0000135
         $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundInstallName = Get-ChildItem -Path "C:\" -Filter "llvm-install-name-tool.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -89,10 +76,12 @@ jobs:
             $env:PATH = "$dir;$env:PATH"
         }
 
-        # 4. تشغيل سكربت البناء
+        # 4. تشغيل سكربت البناء وتمرير مسار الـ SDK مباشرة عبر البرامتر الخاص بالسكربت
         Set-Location $mainScript.DirectoryName
         Write-Host "Executing Build Script in: $($mainScript.DirectoryName)"
-        & .\BUILD-FF-CACHE-MANAGER.ps1
+        
+        # تنفيذ السكربت مع تمرير الخيارات صراحة
+        & .\BUILD-FF-CACHE-MANAGER.ps1 -IosSdk "$sdkPath"
 
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
