@@ -33,16 +33,18 @@ jobs:
             $env:PATH = "$llvmBin;$env:PATH"
         }
 
-        # 2. البحث عن مسار iPhoneOS.sdk
+        # 2. البحث عن مسار iPhoneOS.sdk والـ Frameworks
         $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
         if (-not $sdkDir) {
             Write-Error "Could not find iPhoneOS.sdk"
             exit 1
         }
         $sdkPath = $sdkDir.FullName
+        $frameworksPath = Join-Path $sdkPath "System\Library\Frameworks"
+        $includePath = Join-Path $sdkPath "usr\include"
         Write-Host "SDK Location: $sdkPath"
 
-        # 3. جلب أدوات LLVM ونقلها لمجلدات Tools لمنع خطأ 0xC0000135
+        # 3. جلب أدوات LLVM المساعدة ونقلها لمجلدات Tools لمنع خطأ 0xC0000135
         $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundInstallName = Get-ChildItem -Path "C:\" -Filter "llvm-install-name-tool.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -76,11 +78,24 @@ jobs:
             $env:PATH = "$dir;$env:PATH"
         }
 
-        # 4. تشغيل سكربت البناء وتمرير مسار الـ SDK مباشرة عبر البرامتر الخاص بالسكربت
+        # 4. تعديل آمن لملف build.ps1 لإضافة خيارات SDK المباشرة لأمر clang
+        $innerBuildScript = Get-ChildItem -Recurse -Filter "build.ps1" | Where-Object { $_.DirectoryName -like "*ff_manager*" } | Select-Object -First 1
+        if ($innerBuildScript) {
+            $lines = Get-Content $innerBuildScript.FullName
+            $newLines = foreach ($line in $lines) {
+                if ($line -match "clang" -and $line -notmatch "-isysroot") {
+                    $line.Replace("clang", "clang -isysroot `"$sdkPath`" -F `"$frameworksPath`" -I `"$includePath`"")
+                } else {
+                    $line
+                }
+            }
+            Set-Content -Path $innerBuildScript.FullName -Value $newLines
+            Write-Host "Successfully injected SDK paths into inner build script!"
+        }
+
+        # 5. تشغيل السكربت الرئيسي للبناء
         Set-Location $mainScript.DirectoryName
         Write-Host "Executing Build Script in: $($mainScript.DirectoryName)"
-        
-        # تنفيذ السكربت مع تمرير الخيارات صراحة
         & .\BUILD-FF-CACHE-MANAGER.ps1 -IosSdk "$sdkPath"
 
     - name: Upload IPA Artifact
