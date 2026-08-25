@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: windows-latest
 
     steps:
     - name: Checkout Code
@@ -18,24 +18,48 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Install Python Dependencies
+    - name: Install Python Dependencies & LLVM
       run: |
-        python3 -m pip install --upgrade pip
-        pip3 install lief
+        python -m pip install --upgrade pip
+        pip install lief
+        choco install llvm -y
 
-    - name: Run Build Script
+    - name: Run Official Project Setup & Build
+      shell: powershell
       run: |
-        # البحث عن ملف السكربت الرئيسي وتشغيله عبر PowerShell Core (pwsh)
-        SCRIPT_PATH=$(find . -name "BUILD-FF-CACHE-MANAGER.ps1" | head -n 1)
-        if [ -z "$SCRIPT_PATH" ]; then
-          echo "Could not find BUILD-FF-CACHE-MANAGER.ps1"
-          exit 1
-        fi
-        SCRIPT_DIR=$(dirname "$SCRIPT_PATH")
-        cd "$SCRIPT_DIR"
-        
-        # تشغيل السكربت
-        pwsh ./BUILD-FF-CACHE-MANAGER.ps1
+        # 1. إضافة مسار LLVM الرئيسي للـ PATH
+        $llvmBin = "C:\Program Files\LLVM\bin"
+        if (Test-Path $llvmBin) {
+            $env:PATH = "$llvmBin;$env:PATH"
+        }
+
+        # 2. البحث عن السكربت الرئيسي
+        $mainScript = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
+        if (-not $mainScript) {
+            Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
+            exit 1
+        }
+        $workDir = $mainScript.DirectoryName
+        Set-Location $workDir
+
+        # 3. تشغيل سكربت الإعداد الخاص بالمشروع إن وجد لتجهيز الاعتماديات تلقائياً
+        $setupScript = Get-ChildItem -Recurse -Filter "SETUP-WINDOWS.ps1" | Select-Object -First 1
+        if ($setupScript) {
+            Write-Host "Running Project Setup: $($setupScript.FullName)"
+            & $setupScript.FullName
+        }
+
+        # 4. نسخ clang.exe بأسماء LLVM المفقودة لمنع التوقف
+        $clangPath = Get-Command clang.exe -ErrorAction SilentlyContinue
+        if ($clangPath) {
+            $toolsDir = Join-Path $workDir "app\ff_manager\tools"
+            New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
+            Copy-Item $clangPath.Path -Destination (Join-Path $toolsDir "clang.exe") -Force
+        }
+
+        # 5. تشغيل سكربت البناء الرئيسي
+        Write-Host "Executing Build Script..."
+        & .\BUILD-FF-CACHE-MANAGER.ps1
 
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
