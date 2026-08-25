@@ -59,19 +59,21 @@ jobs:
             $env:PATH = "$dir;$env:PATH"
         }
 
-        # 3. البحث عن مسار iPhoneOS.sdk وتحديده
+        # 3. العثور على مسار iPhoneOS.sdk وضبط متغيرات SDKROOT للمترجم
         $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
         if ($sdkDir) {
-            Write-Host "Found iPhoneOS.sdk at: $($sdkDir.FullName)"
+            Write-Host "Setting SDKROOT to: $($sdkDir.FullName)"
+            $env:SDKROOT = $sdkDir.FullName
             $env:IOS_SDK = $sdkDir.FullName
+            $env:IPHONEOS_DEPLOYMENT_TARGET = "12.0"
         }
 
-        # 4. تشغيل سكريبت البناء مع تمرير الـ SDK
+        # 4. تشغيل سكريبت البناء
         Set-Location $script.DirectoryName
         Write-Host "Executing Build Script in: $($script.DirectoryName)"
         
         if ($sdkDir) {
-            & .\BUILD-FF-CACHE-MANAGER.ps1 -IosSdk $sdkDir.FullName
+            & .\BUILD-FF-CACHE-MANAGER.ps1 -IosSdk "$($sdkDir.FullName)"
         } else {
             & .\BUILD-FF-CACHE-MANAGER.ps1
         }
