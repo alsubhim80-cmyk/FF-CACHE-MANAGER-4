@@ -33,7 +33,7 @@ jobs:
             $env:PATH = "$llvmBin;$env:PATH"
         }
 
-        # 2. العثور على مسار iPhoneOS.sdk ومسارات المكتبات الهيكلية Frameworks
+        # 2. تحديد مسار SDK والمجلدات التابعة له
         $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
         if (-not $sdkDir) {
             Write-Error "Could not find iPhoneOS.sdk"
@@ -44,14 +44,14 @@ jobs:
         $includePath = Join-Path $sdkPath "usr\include"
         Write-Host "SDK Location: $sdkPath"
 
-        # 3. جلب ملفات LLVM المصدرية ونسخها لمنع خطأ 0xC0000135
+        # 3. جلب ملفات LLVM المساعدة ونقلها لمنع خطأ DLLs (0xC0000135)
         $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundInstallName = Get-ChildItem -Path "C:\" -Filter "llvm-install-name-tool.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundObjcopy = Get-ChildItem -Path "C:\" -Filter "llvm-objcopy.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 
         $lipoSrc = if ($foundLipo) { $foundLipo } else { $foundAr }
-        $installNameSrc = if ($foundInstallName) { $foundInstallName } else { if ($foundObjcopy) { $foundObjcopy } else { $foundAr } }
+        $installNameSrc = if ($foundInstallName) { $foundInstallName } else { if ($foundInstallName) { $foundInstallName } else { $foundAr } }
 
         $mainScript = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
         if (-not $mainScript) {
@@ -78,17 +78,12 @@ jobs:
             $env:PATH = "$dir;$env:PATH"
         }
 
-        # 4. تعديل جميع سكربتات PowerShell لتمرير مسارات Frameworks و isysroot لـ Clang
-        $clangFlags = "-isysroot `"$sdkPath`" -F `"$frameworksPath`" -I `"$includePath`""
-        
-        Get-ChildItem -Recurse -Filter "*.ps1" | ForEach-Object {
-            $content = Get-Content $_.FullName -Raw
-            if ($content -match "clang") {
-                $newContent = $content -replace 'clang(\.exe)?', "clang $clangFlags"
-                Set-Content -Path $_.FullName -Value $newContent
-                Write-Host "Patched $($_.Name) with Clang framework flags"
-            }
-        }
+        # 4. إعداد متغيرات البيئة الخاصة بـ Clang للوصول إلى الهيدرات والأطر تلقائياً
+        $env:SDKROOT = $sdkPath
+        $env:IOS_SDK = $sdkPath
+        $env:CPATH = "$includePath;$frameworksPath"
+        $env:C_INCLUDE_PATH = $includePath
+        $env:OBJC_INCLUDE_PATH = "$includePath;$frameworksPath"
 
         # 5. تشغيل السكربت الرئيسي للبناء
         Set-Location $mainScript.DirectoryName
