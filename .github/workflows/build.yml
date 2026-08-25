@@ -27,7 +27,7 @@ jobs:
     - name: Setup Tools & Build
       shell: powershell
       run: |
-        # 1. البحث عن أدوات LLVM وتثبيتها
+        # 1. البحث عن أدوات LLVM وتجهيز البيئة
         $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
         $foundObjcopy = Get-ChildItem -Path "C:\" -Filter "llvm-objcopy.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -59,10 +59,22 @@ jobs:
             $env:PATH = "$dir;$env:PATH"
         }
 
-        # 3. تشغيل سكريبت البناء
+        # 3. البحث عن مسار iPhoneOS.sdk وتحديده
+        $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
+        if ($sdkDir) {
+            Write-Host "Found iPhoneOS.sdk at: $($sdkDir.FullName)"
+            $env:IOS_SDK = $sdkDir.FullName
+        }
+
+        # 4. تشغيل سكريبت البناء مع تمرير الـ SDK
         Set-Location $script.DirectoryName
         Write-Host "Executing Build Script in: $($script.DirectoryName)"
-        & .\BUILD-FF-CACHE-MANAGER.ps1
+        
+        if ($sdkDir) {
+            & .\BUILD-FF-CACHE-MANAGER.ps1 -IosSdk $sdkDir.FullName
+        } else {
+            & .\BUILD-FF-CACHE-MANAGER.ps1
+        }
 
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
