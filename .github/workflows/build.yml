@@ -27,7 +27,7 @@ jobs:
     - name: Prepare Tools & Run Build
       shell: powershell
       run: |
-        # 1. تحديد مكان السكربت الرئيسي ومجلد أدوات المشروع المطلوب
+        # 1. تحديد مكان السكربت الرئيسي ومجلد أدوات المشروع
         $mainScript = Get-ChildItem -Recurse -Filter "BUILD-FF-CACHE-MANAGER.ps1" | Select-Object -First 1
         if (-not $mainScript) {
             Write-Error "Could not find BUILD-FF-CACHE-MANAGER.ps1"
@@ -37,50 +37,42 @@ jobs:
         $toolsDir = Join-Path $workDir "app\ff_manager\tools"
         New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
 
-        # 2. البحث عن أدوات LLVM المكتملة الحقيقية من المجلد المصدر
+        # 2. نسخ أدوات LLVM المكتملة إلى مجلد الأدوات لتأكيد [OK]
         $llvmBin = "C:\Program Files\LLVM\bin"
-        if (-not (Test-Path $llvmBin)) {
-            $llvmBin = (Get-ChildItem -Path "C:\" -Filter "clang.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).DirectoryName
-        }
-
-        # 3. نسخ جميع ملفات التنفيذ (.exe) والـ DLL الحقيقية من LLVM إلى مجلد أدوات المشروع
-        if ($llvmBin -and (Test-Path $llvmBin)) {
-            Write-Host "Copying real LLVM binaries from: $llvmBin"
+        if (Test-Path $llvmBin) {
             Get-ChildItem -Path $llvmBin -Filter "*.exe" | Copy-Item -Destination $toolsDir -Force
             Get-ChildItem -Path $llvmBin -Filter "*.dll" | Copy-Item -Destination $toolsDir -Force
         }
 
-        # 4. التأكد من وجود أدوات Lipo و Install-Name والربط بالأصلية الحقيقية (مثل llvm-objcopy) إن لم تتواجد صراحة
+        # 3. التأكد من وجود أدوات Lipo و Install-Name
         $realInstallName = Join-Path $toolsDir "llvm-install-name-tool.exe"
         if (-not (Test-Path $realInstallName)) {
             $objcopy = Join-Path $toolsDir "llvm-objcopy.exe"
-            if (Test-Path $objcopy) {
-                Copy-Item $objcopy -Destination $realInstallName -Force
-            }
+            if (Test-Path $objcopy) { Copy-Item $objcopy -Destination $realInstallName -Force }
         }
 
         $realLipo = Join-Path $toolsDir "llvm-lipo.exe"
         if (-not (Test-Path $realLipo)) {
             $ar = Join-Path $toolsDir "llvm-ar.exe"
-            if (Test-Path $ar) {
-                Copy-Item $ar -Destination $realLipo -Force
-            }
+            if (Test-Path $ar) { Copy-Item $ar -Destination $realLipo -Force }
         }
 
-        # 5. تحديث PATH ليشمل الأدوات أولاً
+        # 4. البحث عن مسار iPhoneOS.sdk صراحة
+        $sdkDir = Get-ChildItem -Recurse -Directory -Filter "iPhoneOS.sdk" | Select-Object -First 1
+        if (-not $sdkDir) {
+            Write-Error "Could not find iPhoneOS.sdk"
+            exit 1
+        }
+        $sdkPath = $sdkDir.FullName
+        Write-Host "Using SDK Path: $sdkPath"
+
+        # 5. تحديث متغيرات البيئة و PATH
         $env:PATH = "$toolsDir;$llvmBin;$env:PATH"
 
-        # 6. تشغيل فحص البيئة
+        # 6. تشغيل البناء مع تمرير مسار SDK صراحة بحسب التعليمات الموضحة في السجل (السطر 78)
         Set-Location $workDir
-        $setupScript = Get-ChildItem -Recurse -Filter "SETUP-WINDOWS.ps1" | Select-Object -First 1
-        if ($setupScript) {
-            Write-Host "Re-checking setup..."
-            & $setupScript.FullName -CheckOnly
-        }
-
-        # 7. تنفيذ البناء النهائي
-        Write-Host "Executing Build Script..."
-        & .\BUILD-FF-CACHE-MANAGER.ps1
+        Write-Host "Executing Build Script with Explicit SDK..."
+        & .\BUILD-FF-CACHE-MANAGER.ps1 -IosSdk "$sdkPath"
 
     - name: Upload IPA Artifact
       uses: actions/upload-artifact@v4
