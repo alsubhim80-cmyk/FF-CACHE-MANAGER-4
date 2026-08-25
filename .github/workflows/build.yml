@@ -37,32 +37,40 @@ jobs:
         $toolsDir = Join-Path $workDir "app\ff_manager\tools"
         New-Item -ItemType Directory -Force -Path $toolsDir | Out-Null
 
-        # 2. البحث عن أدوات LLVM المتاحة في النظام
-        $clangExe = Get-Command clang.exe -ErrorAction SilentlyContinue
-        $foundAr = Get-ChildItem -Path "C:\" -Filter "llvm-ar.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        $foundObjcopy = Get-ChildItem -Path "C:\" -Filter "llvm-objcopy.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        $foundLipo = Get-ChildItem -Path "C:\" -Filter "llvm-lipo.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-        $foundInstallName = Get-ChildItem -Path "C:\" -Filter "llvm-install-name-tool.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-
-        # 3. توفير ملفات llvm-lipo و llvm-install-name-tool بالقوة بالأسماء المطلوبة حرفياً
-        $lipoTarget = if ($foundLipo) { $foundLipo.FullName } elseif ($foundAr) { $foundAr.FullName } else { $clangExe.Path }
-        $installNameTarget = if ($foundInstallName) { $foundInstallName.FullName } elseif ($foundObjcopy) { $foundObjcopy.FullName } else { $clangExe.Path }
-
-        Copy-Item $lipoTarget -Destination (Join-Path $toolsDir "llvm-lipo.exe") -Force
-        Copy-Item $installNameTarget -Destination (Join-Path $toolsDir "llvm-install-name-tool.exe") -Force
-
-        if ($clangExe) {
-            Copy-Item $clangExe.Path -Destination (Join-Path $toolsDir "clang.exe") -Force
+        # 2. البحث عن أدوات LLVM المكتملة الحقيقية من المجلد المصدر
+        $llvmBin = "C:\Program Files\LLVM\bin"
+        if (-not (Test-Path $llvmBin)) {
+            $llvmBin = (Get-ChildItem -Path "C:\" -Filter "clang.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).DirectoryName
         }
 
-        # 4. نسخ جميع ملفات الـ DLL التابعة للمترجم لضمان عمل الأدوات بدون أخطاء
-        $llvmBinDir = "C:\Program Files\LLVM\bin"
-        if (Test-Path $llvmBinDir) {
-            Get-ChildItem -Path $llvmBinDir -Filter "*.dll" | Copy-Item -Destination $toolsDir -Force
-            $env:PATH = "$toolsDir;$llvmBinDir;$env:PATH"
+        # 3. نسخ جميع ملفات التنفيذ (.exe) والـ DLL الحقيقية من LLVM إلى مجلد أدوات المشروع
+        if ($llvmBin -and (Test-Path $llvmBin)) {
+            Write-Host "Copying real LLVM binaries from: $llvmBin"
+            Get-ChildItem -Path $llvmBin -Filter "*.exe" | Copy-Item -Destination $toolsDir -Force
+            Get-ChildItem -Path $llvmBin -Filter "*.dll" | Copy-Item -Destination $toolsDir -Force
         }
 
-        # 5. تشغيل فحص البيئة للتأكد من حصول الأدوات على علامة [OK]
+        # 4. التأكد من وجود أدوات Lipo و Install-Name والربط بالأصلية الحقيقية (مثل llvm-objcopy) إن لم تتواجد صراحة
+        $realInstallName = Join-Path $toolsDir "llvm-install-name-tool.exe"
+        if (-not (Test-Path $realInstallName)) {
+            $objcopy = Join-Path $toolsDir "llvm-objcopy.exe"
+            if (Test-Path $objcopy) {
+                Copy-Item $objcopy -Destination $realInstallName -Force
+            }
+        }
+
+        $realLipo = Join-Path $toolsDir "llvm-lipo.exe"
+        if (-not (Test-Path $realLipo)) {
+            $ar = Join-Path $toolsDir "llvm-ar.exe"
+            if (Test-Path $ar) {
+                Copy-Item $ar -Destination $realLipo -Force
+            }
+        }
+
+        # 5. تحديث PATH ليشمل الأدوات أولاً
+        $env:PATH = "$toolsDir;$llvmBin;$env:PATH"
+
+        # 6. تشغيل فحص البيئة
         Set-Location $workDir
         $setupScript = Get-ChildItem -Recurse -Filter "SETUP-WINDOWS.ps1" | Select-Object -First 1
         if ($setupScript) {
@@ -70,7 +78,7 @@ jobs:
             & $setupScript.FullName -CheckOnly
         }
 
-        # 6. تنفيذ البناء النهائي
+        # 7. تنفيذ البناء النهائي
         Write-Host "Executing Build Script..."
         & .\BUILD-FF-CACHE-MANAGER.ps1
 
